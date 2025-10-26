@@ -1,0 +1,371 @@
+
+//This code configures the Raspberry Pico W into Soft Access Point mode 
+//and will act as a web server for all the connecting devices. 
+//The application will turn ON and OFF four different colours of the RGB LEDs
+//according to commands from the clients.
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include "Adafruit_NeoPixel.h"           //include the RGB library
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <WebServer.h>
+
+//RGB LED declarations ----------------
+#define PIN_WS2812B  6  // The Pico pin that connects to WS2812B
+#define NUM_PIXELS   3  // The number of LEDs (pixels) on WS2812B
+#define DELAY_INTERVAL 500
+
+Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
+
+
+//define OLED screen dimensions -----------
+#define SCREEN_WIDTH 128 // OLED display width, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define OLED_RESET     -1 // Reset pin # 
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+
+//create OLED display object "display" ----------
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+
+//-------Web server parameters ----------
+
+//specifies the SSID and Password of the soft Access Point
+const char* ap_ssid = "GowersSmall";           //sets soft Access Point SSID
+const char* ap_password= "mattyisalegend";    //sets access Point Password
+uint8_t max_connections=8;               //Sets maximum Connection Limit for AP
+int current_stations=0, new_stations=0;  //variables to hold the number of connected clients
+
+IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
+//IPAddress gateway(10, 45, 1, 1);
+//IPAddress subnet(255, 255, 255, 0);       //usually the same as the IP address
+IPAddress IP;
+
+//specifies the Webserver instance to connect with at HTTP Port: 80
+WebServer server(80);
+//------------------------------------ 
+
+//specifies the boolean variables indicating the status of red, green & blue LEDs
+//specifies the current colour values of the LEDs
+bool redLED_status=false, greenLED_status=false, blueLED_status=false;
+int  redValue = 0, greenValue = 0, blueValue = 0;
+
+//declares the functions implemented in the program
+void handle_OnConnect();
+void handle_redON();
+void handle_redOFF();
+void handle_greenON();
+void handle_greenOFF();
+void handle_blueON();
+void handle_blueOFF();
+void handle_NotFound();
+void displayParameters();
+void handle_getTemp();
+void handle_getHumidity();
+void handle_getPressure();
+String HTML();
+//---------------------------------------------
+
+void setup() {
+  //Start the serial communication channel
+  Serial.begin(115200);
+  Serial.println();
+  display.setCursor(0,10);                 //Start at top-left corner (Col=0, Row =10)
+  display.setTextSize(1);                 //Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE);  
+  //-----------
+  // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
+  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println(F("SSD1306 allocation failed"));
+    for(;;); // Don't proceed, loop forever
+  }
+    WS2812B.begin();
+    WS2812B.show();
+  // the library initializes this with an Adafruit splash screen.
+  display.display();  //this function is required to display image
+  delay(2000); // Pause for 2 seconds
+
+  //configure Pico WiFi
+  //WiFi.mode(WIFI_AP);                            //configures Pico WiFi as soft Access Point
+  
+  //WiFi.softAPConfig(local_IP, gateway, subnet);  //configures static IP for the soft AP
+  WiFi.mode(WIFI_STA);
+  WiFi.config(local_IP);
+  WiFi.setHostname("PicoW");                  //sets the device hostname
+  WiFi.begin(ap_ssid,ap_password);
+  display.clearDisplay();
+  display.setCursor(0,10);                 //Start at top-left corner (Col=0, Row =10)
+  display.setTextSize(1);                 //Normal 1:1 pixel scale
+  while(WiFi.status()!=WL_CONNECTED)
+  {
+    Serial.println("Attempting to connect to Wifi");
+    display.clearDisplay();
+    display.println("Attempting to connect to Wifi");
+    display.display();
+    delay(100);
+  }
+  /*//Setting the AP Mode with SSID, Password, and Max Connection Limit
+  if(WiFi.softAP(ap_ssid,ap_password,1,false,max_connections)==true){
+    Serial.print("Access Point is Created with SSID: ");
+    Serial.println(ap_ssid);
+    Serial.print("Max Connections Allowed: ");
+    Serial.println(max_connections);
+    Serial.print("Access Point IP: ");
+    Serial.println(WiFi.softAPIP());
+  }
+  else{
+    Serial.println("Unable to Create Access Point");
+  }*/
+  Serial.println("Connected to Wifi");
+  display.clearDisplay();
+  display.println("Connected to Wifi");
+  display.println("IP Address:");
+  display.println(WiFi.localIP());
+  Serial.println("IP Address: ");
+  Serial.println(WiFi.localIP());
+  display.display();
+  delay(5000);
+  display.clearDisplay();
+  display.println(WiFi.status());
+  delay(2000);
+  Serial.print("Device IP: ");
+  Serial.println(WiFi.localIP());
+  //Specifying the functions which will be executed upon corresponding GET request from the client
+  server.on("/",handle_OnConnect);
+  server.on("/redON",handle_redON);
+  server.on("/redOFF",handle_redOFF);
+  server.on("/greenON",handle_greenON);
+  server.on("/greenOFF",handle_greenOFF);
+  server.on("/blueON",handle_blueON);
+  server.on("/blueOFF",handle_blueOFF);
+  server.onNotFound(handle_NotFound);
+  display.display();
+  //Starting the Server
+  server.begin();
+  Serial.println("HTTP Server Started");
+  display.clearDisplay();
+display.println("HTTP Server Started");
+display.print("IP: ");
+display.println(WiFi.localIP());
+display.display();
+delay(3000);
+}
+ 
+void loop() {
+  //Assign the server to handle the clients
+  server.handleClient();
+  
+  //Continuously check how many stations are connected to Soft AP and notify whenever a new station is connected or disconnected
+  //new_stations=WiFi.softAPgetStationNum();
+  
+   //Device is Connected
+  /*if(current_stations<new_stations){
+    current_stations=new_stations;
+    Serial.print("New Device Connected to SoftAP... Total Connections: ");
+    Serial.println(current_stations);
+    Serial.println(WiFi.softAPIP());
+  }*/
+  //device is Disconnected
+  /*if(current_stations>new_stations) {
+    current_stations=new_stations;
+    Serial.print("Device disconnected from SoftAP... Total Connections: ");
+    Serial.println(current_stations);
+  }*/
+  
+  //displayParameters();
+  display.clearDisplay();
+  display.println("Make a choice on light");
+  display.display();
+  //changes the three RGB LEDs On and OFF according client commands
+  //Red LED
+  if(redLED_status==false) {
+    redValue = 0;
+  }
+  else {
+    redValue = 255;
+  }
+  //Greed LED
+  if(greenLED_status==false) {
+    greenValue = 0;
+  }
+  else {
+    greenValue = 255;
+  }
+  //Blue LED
+  if(blueLED_status==false) {
+    blueValue = 0;
+  }
+  else {
+    blueValue = 255;
+  }
+
+  // turn first pixel to red one 
+  WS2812B.clear(); // set all pixel colors to 'off'. It only takes effect if pixels.show() is called
+  
+  //sets 1st LED
+  WS2812B.setPixelColor(0, WS2812B.Color(redValue, 0, 0)); // it only takes effect if pixels.show() is called
+  
+  //sets 2nd LED (middle)
+  WS2812B.setPixelColor(1, WS2812B.Color(0, greenValue, 0)); 
+
+  //sets 3rd LED
+  WS2812B.setPixelColor(2, WS2812B.Color(0, 0, blueValue)); 
+  
+  WS2812B.show();   // send the updated pixel colors to the WS2812B hardware.
+}
+void handle_OnConnect(){
+  Serial.println("Client Connected");
+  server.send(200, "text/html","OK"); 
+}
+void handle_redON(){
+  Serial.println("RED ON");
+  redLED_status=true;
+  server.send(200, "text/html","OK");
+}
+ 
+void handle_redOFF()
+{
+  Serial.println("RED OFF");
+  redLED_status=false;
+  server.send(200, "text/html","OK");
+}
+ 
+void handle_greenON()
+{
+  Serial.println("GREEN ON");
+  greenLED_status=true;
+  server.send(200, "text/html","OK");
+}
+ 
+void handle_greenOFF()
+{
+  Serial.println("GREEN OFF");
+  greenLED_status=false;
+  server.send(200, "text/html","OK");
+}
+
+void handle_blueON()
+{
+  Serial.println("BLUE ON");
+  blueLED_status=true;
+  server.send(200, "text/html","OK");
+}
+void handle_blueOFF(){
+  Serial.println("BLUE OFF");
+  blueLED_status=false;
+  server.send(200, "text/html","OK");
+}
+void handle_NotFound() {
+   server.send(404, "text/plain", "Not found");
+}
+/*
+void handle_OnConnect(){
+  Serial.println("Client Connected");
+  server.send(200, "text/html", HTML()); 
+}
+ 
+void handle_redON(){
+  Serial.println("RED ON");
+  redLED_status=true;
+  server.send(200, "text/html", HTML());
+}
+ 
+void handle_redOFF()
+{
+  Serial.println("RED OFF");
+  redLED_status=false;
+  server.send(200, "text/html", HTML());
+}
+ 
+void handle_greenON()
+{
+  Serial.println("GREEN ON");
+  greenLED_status=true;
+  server.send(200, "text/html", HTML());
+}
+ 
+void handle_greenOFF()
+{
+  Serial.println("GREEN OFF");
+  greenLED_status=false;
+  server.send(200, "text/html", HTML());
+}
+ 
+void handle_blueON()
+{
+  Serial.println("BLUE ON");
+  blueLED_status=true;
+  server.send(200, "text/html", HTML());
+}
+ 
+void handle_blueOFF(){
+  Serial.println("BLUE OFF");
+  blueLED_status=false;
+  server.send(200, "text/html", HTML());
+}
+*/
+
+ 
+String HTML(){
+  String msg="<!DOCTYPE html> <html>\n";
+  msg+="<head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0, user-scalable=no\">\n";
+  msg+="<title>LED Control</title>\n";
+  msg+="<style>html{font-family:Helvetica; display:inline-block; margin:0px auto; text-align:center;}\n";
+  msg+="body{margin-top: 50px;} h1{color: #444444; margin: 50px auto 30px;} h3{color:#444444; margin-bottom: 50px;}\n";
+  msg+=".button{display:block; width:80px; background-color:#f48100; border:none; color:white; padding: 13px 30px; text-decoration:none; font-size:25px; margin: 0px auto 35px; cursor:pointer; border-radius:4px;}\n";
+  msg+=".button-on{background-color:#f48100;}\n";
+  msg+=".button-on:active{background-color:#f48100;}\n";
+  msg+=".button-off{background-color:#26282d;}\n";
+  msg+=".button-off:active{background-color:#26282d;}\n";
+  msg+="</style>\n";
+  msg+="</head>\n";
+  msg+="<body>\n";
+  msg+="<h1>Raspberry Pi Pico Web Server</h1>\n";
+  msg+="<h3>Using Access Point (AP) Mode</h3>\n";
+  
+  if(redLED_status==false)
+  {
+    msg+="<p>RED LED Status: OFF</p><a class=\"button button-on\" href=\"/redON\">ON</a>\n";    
+  }
+  else
+  {
+    msg+="<p>RED LED Status: ON</p><a class=\"button button-off\" href=\"/redOFF\">OFF</a>\n";
+  }
+ 
+  if(greenLED_status==false)
+  {
+    msg+="<p>GREEN LED Status: OFF</p><a class=\"button button-on\" href=\"/greenON\">ON</a>\n";    
+  }
+  else
+  {
+    msg+="<p>GREEN Status: ON</p><a class=\"button button-off\" href=\"/greenOFF\">OFF</a>\n";
+  }
+ 
+  if(blueLED_status==false)
+  {
+    msg+="<p>BLUE Status: OFF</p><a class=\"button button-on\" href=\"/blueON\">ON</a>\n";    
+  }
+  else
+  {
+    msg+="<p>BLUE Status: ON</p><a class=\"button button-off\" href=\"/blueOFF\">OFF</a>\n";
+  }
+ 
+  msg+="</body>\n";
+  msg+="</html>\n";
+  return msg;
+}
+
+//displays string s on OLED display
+void displayParameters(){
+  display.clearDisplay();
+  display.setCursor(0,10);                 //Start at top-left corner (Col=0, Row =10)
+  display.setTextSize(1);                 //Normal 1:1 pixel scale
+  display.setTextColor(SSD1306_WHITE);    //Draw white text 
+  display.print(F("Total connections: "));
+  display.println(current_stations);
+  display.println();
+  display.print(F("SoftAP: "));
+  display.println(WiFi.softAPIP());
+   
+  display.display();
+}
