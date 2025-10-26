@@ -229,7 +229,9 @@ void handle_redOFF()
   redLED_status=false;
   server.send(200, "text/html","OK");
 }
- 
+void handle_getTemp(){
+  
+}
 void handle_greenON()
 {
   Serial.println("GREEN ON");
