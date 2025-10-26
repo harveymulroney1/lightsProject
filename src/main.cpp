@@ -10,13 +10,15 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <WebServer.h>
-
+#include "bme68xLibrary.h"         //This library is not available in PlatformIO
+                                   //Library added to lib folder on the left
 //RGB LED declarations ----------------
 #define PIN_WS2812B  6  // The Pico pin that connects to WS2812B
 #define NUM_PIXELS   3  // The number of LEDs (pixels) on WS2812B
 #define DELAY_INTERVAL 500
 
 Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
+#define NEW_GAS_MEAS (BME68X_GASM_VALID_MSK | BME68X_HEAT_STAB_MSK | BME68X_NEW_DATA_MSK)
 
 
 //define OLED screen dimensions -----------
@@ -27,7 +29,10 @@ Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
 
 //create OLED display object "display" ----------
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+Bme68x bme;  // climate sensor variable
 
+int climateDelay = 2000; // in MS
+unsigned long previousMillis = 0;
 //-------Web server parameters ----------
 
 //specifies the SSID and Password of the soft Access Point
@@ -37,8 +42,8 @@ uint8_t max_connections=8;               //Sets maximum Connection Limit for AP
 int current_stations=0, new_stations=0;  //variables to hold the number of connected clients
 
 IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
-//IPAddress gateway(10, 45, 1, 1);
-//IPAddress subnet(255, 255, 255, 0);       //usually the same as the IP address
+IPAddress gateway(10, 45, 1, 1);
+IPAddress subnet(255, 255, 255, 0);      
 IPAddress IP;
 
 //specifies the Webserver instance to connect with at HTTP Port: 80
@@ -63,7 +68,11 @@ void displayParameters();
 void handle_getTemp();
 void handle_getHumidity();
 void handle_getPressure();
+void handle_ClimateData();
 String HTML();
+String temp =     "";
+String humid =    "";
+String pressure = "";
 //---------------------------------------------
 
 void setup() {
@@ -90,7 +99,7 @@ void setup() {
   
   //WiFi.softAPConfig(local_IP, gateway, subnet);  //configures static IP for the soft AP
   WiFi.mode(WIFI_STA);
-  WiFi.config(local_IP);
+  WiFi.config(local_IP,gateway, subnet);
   WiFi.setHostname("PicoW");                  //sets the device hostname
   WiFi.begin(ap_ssid,ap_password);
   display.clearDisplay();
@@ -104,6 +113,24 @@ void setup() {
     display.display();
     delay(100);
   }
+
+  	bme.begin(0x76, Wire);
+	if(bme.checkStatus()){
+		if (bme.checkStatus() == BME68X_ERROR){
+			Serial.println("Sensor error:" + bme.statusString());
+			return;
+		}
+		else if (bme.checkStatus() == BME68X_WARNING){
+			Serial.println("Sensor Warning:" + bme.statusString());
+		}
+	}
+  bme.setTPH();
+  uint16_t tempProf[10] = { 100, 200, 320 }; // set temp in degree Celsius
+  uint16_t durProf[10] = { 150, 150, 150 }; // set dur to milliseconds
+
+  bme.setSeqSleep(BME68X_ODR_250_MS);
+	bme.setHeaterProf(tempProf, durProf, 3);
+	bme.setOpMode(BME68X_SEQUENTIAL_MODE);
   /*//Setting the AP Mode with SSID, Password, and Max Connection Limit
   if(WiFi.softAP(ap_ssid,ap_password,1,false,max_connections)==true){
     Serial.print("Access Point is Created with SSID: ");
@@ -138,6 +165,10 @@ void setup() {
   server.on("/greenOFF",handle_greenOFF);
   server.on("/blueON",handle_blueON);
   server.on("/blueOFF",handle_blueOFF);
+  server.on("/getClimateData",handle_ClimateData);
+  server.on("/getTemp",handle_getTemp);
+  server.on("/getHumidity",handle_getHumidity);
+  server.on("/getPressure",handle_getPressure);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -150,7 +181,25 @@ display.println(WiFi.localIP());
 display.display();
 delay(3000);
 }
- 
+
+void fetchClimateData();
+void fetchClimateData()
+{
+  
+  bme68xData data;
+  uint8_t nFieldsLeft = 0;
+  delay(200);
+  if(bme.fetchData()){
+    do{
+      nFieldsLeft = bme.getData(data);
+      temp =  String(data.temperature-4.49);
+      humid = String(data.humidity);
+      pressure =  String(data.pressure);
+      if(data.gas_index == 2) /* Sequential mode sleeps after this measurement */
+          delay(250);
+    }while(nFieldsLeft);
+  }
+}
 void loop() {
   //Assign the server to handle the clients
   server.handleClient();
@@ -173,6 +222,11 @@ void loop() {
   }*/
   
   //displayParameters();
+  unsigned long currentMillis = millis();
+  if(currentMillis - previousMillis >= climateDelay) {
+    fetchClimateData();
+    previousMillis = currentMillis;
+  }
   display.clearDisplay();
   display.println("Make a choice on light");
   display.display();
@@ -229,8 +283,22 @@ void handle_redOFF()
   redLED_status=false;
   server.send(200, "text/html","OK");
 }
+void handle_ClimateData(){
+  String climateData[3];
+  climateData[0]=temp;
+  climateData[1]=humid; 
+  climateData[2]=pressure;
+  String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2];
+  server.send(200, "text/plain", combinedData);
+}
 void handle_getTemp(){
-  
+  server.send(200, "text/plain", temp);
+}
+void handle_getHumidity(){
+  server.send(200, "text/plain", humid);
+}
+void handle_getPressure(){
+  server.send(200, "text/plain", pressure);
 }
 void handle_greenON()
 {
