@@ -69,12 +69,17 @@ void handle_getTemp();
 void handle_getHumidity();
 void handle_getPressure();
 void handle_ClimateData();
+void addCORS();
 String HTML();
 String temp =     "";
 String humid =    "";
 String pressure = "";
 //---------------------------------------------
-
+void addCORS() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "*");
+}
 void setup() {
   //Start the serial communication channel
   Serial.begin(115200);
@@ -183,6 +188,12 @@ delay(3000);
 }
 
 void fetchClimateData();
+void sendCORSHeaders();
+void sendCORSHeaders() {
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
+}
 void fetchClimateData()
 {
   
@@ -273,17 +284,21 @@ void handle_OnConnect(){
 }
 void handle_redON(){
   Serial.println("RED ON");
+  addCORS();
   redLED_status=true;
   server.send(200, "text/html","OK");
 }
  
 void handle_redOFF()
 {
+  addCORS();
   Serial.println("RED OFF");
   redLED_status=false;
   server.send(200, "text/html","OK");
 }
 void handle_ClimateData(){
+  addCORS();
+  delay(1000);
   String climateData[3];
   climateData[0]=temp;
   climateData[1]=humid; 
@@ -292,16 +307,21 @@ void handle_ClimateData(){
   server.send(200, "text/plain", combinedData);
 }
 void handle_getTemp(){
+  //sendCORSHeaders();
+  addCORS();
   server.send(200, "text/plain", temp);
 }
 void handle_getHumidity(){
+  addCORS();
   server.send(200, "text/plain", humid);
 }
 void handle_getPressure(){
+  addCORS();
   server.send(200, "text/plain", pressure);
 }
 void handle_greenON()
 {
+  addCORS();
   Serial.println("GREEN ON");
   greenLED_status=true;
   server.send(200, "text/html","OK");
@@ -309,6 +329,7 @@ void handle_greenON()
  
 void handle_greenOFF()
 {
+  addCORS();
   Serial.println("GREEN OFF");
   greenLED_status=false;
   server.send(200, "text/html","OK");
@@ -316,11 +337,13 @@ void handle_greenOFF()
 
 void handle_blueON()
 {
+  addCORS();
   Serial.println("BLUE ON");
   blueLED_status=true;
   server.send(200, "text/html","OK");
 }
 void handle_blueOFF(){
+  addCORS();
   Serial.println("BLUE OFF");
   blueLED_status=false;
   server.send(200, "text/html","OK");
