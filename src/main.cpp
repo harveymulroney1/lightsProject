@@ -10,6 +10,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <WebServer.h>
+#include "Adafruit_MAX1704X.h" //fuel gauge library
 #include "bme68xLibrary.h"         //This library is not available in PlatformIO
                                    //Library added to lib folder on the left
 //RGB LED declarations ----------------
@@ -20,7 +21,7 @@
 Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
 #define NEW_GAS_MEAS (BME68X_GASM_VALID_MSK | BME68X_HEAT_STAB_MSK | BME68X_NEW_DATA_MSK)
 
-
+Adafruit_MAX17048 maxlipo;   //creates fuel gauge object
 //define OLED screen dimensions -----------
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -38,12 +39,18 @@ unsigned long previousMillis = 0;
 //specifies the SSID and Password of the soft Access Point
 const char* ap_ssid = "GowersSmall";           //sets soft Access Point SSID
 const char* ap_password= "mattyisalegend";    //sets access Point Password
+// MOBILE
+/* const char* ap_ssid = "Harvey's iPhone";
+const char* ap_password= "harvey123"; */
 uint8_t max_connections=8;               //Sets maximum Connection Limit for AP
 int current_stations=0, new_stations=0;  //variables to hold the number of connected clients
 
 IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
 IPAddress gateway(10, 45, 1, 1);
-IPAddress subnet(255, 255, 255, 0);      
+IPAddress subnet(255, 255, 255, 0);  
+/* IPAddress local_IP(172,20,10,6);
+IPAddress gateway(172,20,10,1);
+IPAddress subnet(255,255,255,240); */
 IPAddress IP;
 
 //specifies the Webserver instance to connect with at HTTP Port: 80
@@ -56,6 +63,7 @@ bool redLED_status=false, greenLED_status=false, blueLED_status=false;
 int  redValue = 0, greenValue = 0, blueValue = 0;
 
 //declares the functions implemented in the program
+void readFuelGaugeMeasurement();
 void handle_OnConnect();
 void handle_redON();
 void handle_redOFF();
@@ -162,6 +170,11 @@ void setup() {
   delay(2000);
   Serial.print("Device IP: ");
   Serial.println(WiFi.localIP());
+  while(!maxlipo.begin()){
+    Serial.println("Could not find a MAX1704X sensor");
+    delay(2000);
+  }
+  Serial.print(F("Fuel Gauge sensor found!"));
   //Specifying the functions which will be executed upon corresponding GET request from the client
   server.on("/",handle_OnConnect);
   server.on("/redON",handle_redON);
@@ -214,6 +227,7 @@ void fetchClimateData()
 void loop() {
   //Assign the server to handle the clients
   server.handleClient();
+  readFuelGaugeMeasurement();
   
   //Continuously check how many stations are connected to Soft AP and notify whenever a new station is connected or disconnected
   //new_stations=WiFi.softAPgetStationNum();
@@ -350,6 +364,34 @@ void handle_blueOFF(){
 }
 void handle_NotFound() {
    server.send(404, "text/plain", "Not found");
+}
+
+
+void readFuelGaugeMeasurement(){
+  float cellVoltage = maxlipo.cellVoltage();  //reads cell voltage
+  if (isnan(cellVoltage)) {
+    Serial.println("Failed to read cell voltage, check battery is connected!");
+    delay(1000);
+    return;
+  }
+  
+  float battPercent = (cellVoltage/4.2)*100;     //converts cell voltage reading to proportion of 4.2v
+  if(battPercent >=100.0)
+    battPercent = 100;
+  
+  display.setCursor(0,18);                  //Start at top-left corner (Col=0, Row=18)
+  display.print(F("Voltage: "));
+  display.print(String(cellVoltage, 2));    //converts integer to String before invoking display() function
+                                            //a simple print with cursor spec will position value at the
+                                            //end of previous cursor position
+
+  display.setCursor(0,30);                  //Col=0,Row=30
+  display.print(F("Proportion: "));
+
+  display.print(String(battPercent, 1)); 
+  display.print(F("%"));
+  display.display(); 
+  delay(1000);  // save energy, dont query too often!
 }
 /*
 void handle_OnConnect(){
