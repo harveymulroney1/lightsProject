@@ -31,7 +31,7 @@ Adafruit_MAX17048 maxlipo;   //creates fuel gauge object
 //create OLED display object "display" ----------
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Bme68x bme;  // climate sensor variable
-
+float battPercentage;
 int climateDelay = 2000; // in MS
 unsigned long previousMillis = 0;
 //-------Web server parameters ----------
@@ -187,6 +187,7 @@ void setup() {
   server.on("/getTemp",handle_getTemp);
   server.on("/getHumidity",handle_getHumidity);
   server.on("/getPressure",handle_getPressure);
+  server.on("/getBattery",handle_getBattery);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -228,23 +229,6 @@ void loop() {
   //Assign the server to handle the clients
   server.handleClient();
   readFuelGaugeMeasurement();
-  
-  //Continuously check how many stations are connected to Soft AP and notify whenever a new station is connected or disconnected
-  //new_stations=WiFi.softAPgetStationNum();
-  
-   //Device is Connected
-  /*if(current_stations<new_stations){
-    current_stations=new_stations;
-    Serial.print("New Device Connected to SoftAP... Total Connections: ");
-    Serial.println(current_stations);
-    Serial.println(WiFi.softAPIP());
-  }*/
-  //device is Disconnected
-  /*if(current_stations>new_stations) {
-    current_stations=new_stations;
-    Serial.print("Device disconnected from SoftAP... Total Connections: ");
-    Serial.println(current_stations);
-  }*/
   
   //displayParameters();
   unsigned long currentMillis = millis();
@@ -320,6 +304,12 @@ void handle_ClimateData(){
   String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2];
   server.send(200, "text/plain", combinedData);
 }
+void handle_getBattery(){
+  addCORS();
+  delay(500);
+  readFuelGaugeMeasurement();
+  server.send(200,"text/plain",(String(battPercentage,1))); // read with a % other side
+}
 void handle_getTemp(){
   //sendCORSHeaders();
   addCORS();
@@ -376,6 +366,7 @@ void readFuelGaugeMeasurement(){
   }
   
   float battPercent = (cellVoltage/4.2)*100;     //converts cell voltage reading to proportion of 4.2v
+  battPercentage = battPercent;
   if(battPercent >=100.0)
     battPercent = 100;
   
