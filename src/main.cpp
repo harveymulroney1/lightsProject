@@ -9,6 +9,8 @@
 #include "Adafruit_NeoPixel.h"           //include the RGB library
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "BH1745NUC.h"          //light measurement sensor library
+
 #include <WebServer.h>
 #include "bme68xLibrary.h"         //This library is not available in PlatformIO
                                    //Library added to lib folder on the left
@@ -19,8 +21,9 @@
 
 Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
 #define NEW_GAS_MEAS (BME68X_GASM_VALID_MSK | BME68X_HEAT_STAB_MSK | BME68X_NEW_DATA_MSK)
-
-
+#define BH1745NUC_DEVICE_ADDRESS_38 0x38    //light measurement sensor I2C address
+BH1745NUC bh1745nuc = BH1745NUC();
+void readLightMeasurements();
 //define OLED screen dimensions -----------
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -69,11 +72,16 @@ void handle_getTemp();
 void handle_getHumidity();
 void handle_getPressure();
 void handle_ClimateData();
+void handle_getRGBC();
 void addCORS();
 String HTML();
 String temp =     "";
 String humid =    "";
 String pressure = "";
+String red="";
+String green="";
+String blue="";
+String clear="";
 //---------------------------------------------
 void addCORS() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -174,6 +182,7 @@ void setup() {
   server.on("/getTemp",handle_getTemp);
   server.on("/getHumidity",handle_getHumidity);
   server.on("/getPressure",handle_getPressure);
+  server.on("/getRGBC",handle_getRGBC);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -184,6 +193,8 @@ display.println("HTTP Server Started");
 display.print("IP: ");
 display.println(WiFi.localIP());
 display.display();
+bh1745nuc.begin(BH1745NUC_DEVICE_ADDRESS_38);
+bh1745nuc.startMeasurement();
 delay(3000);
 }
 
@@ -211,6 +222,24 @@ void fetchClimateData()
     }while(nFieldsLeft);
   }
 }
+void readLightMeasurements() {
+  if(!bh1745nuc.read()) {
+    Serial.println("Failed to read light data from sensor!");
+    delay(500);
+    return;
+  }
+  unsigned short rgbc[4];
+  rgbc[0] = bh1745nuc.red;
+  red = (String(rgbc[0]));
+  rgbc[1] = bh1745nuc.green;
+  green = (String(rgbc[1]));
+  rgbc[2] = bh1745nuc.blue;
+  blue = (String(rgbc[2]));
+  rgbc[3] = bh1745nuc.clear;
+  clear = (String(rgbc[3]));
+  Serial.print(String("R: ")+(String(rgbc[0]))+",G"+(String(rgbc[1]))+",B"+(String(rgbc[2]))+",C"+(String(rgbc[3]))+"\n");
+  
+} 
 void loop() {
   //Assign the server to handle the clients
   server.handleClient();
@@ -238,6 +267,8 @@ void loop() {
     fetchClimateData();
     previousMillis = currentMillis;
   }
+  
+  readLightMeasurements();
   display.clearDisplay();
   display.println("Make a choice on light");
   display.display();
@@ -304,6 +335,17 @@ void handle_ClimateData(){
   climateData[1]=humid; 
   climateData[2]=pressure;
   String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2];
+  server.send(200, "text/plain", combinedData);
+}
+void handle_getRGBC(){
+  addCORS();
+  delay(1000);
+  String rgbcData[4];
+  rgbcData[0]=red;
+  rgbcData[1]=green; 
+  rgbcData[2]=blue;
+  rgbcData[3]=clear;
+  String combinedData = rgbcData[0] + "," + rgbcData[1] + "," + rgbcData[2] + "," + rgbcData[3];
   server.send(200, "text/plain", combinedData);
 }
 void handle_getTemp(){
