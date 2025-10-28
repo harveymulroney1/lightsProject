@@ -10,7 +10,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "BH1745NUC.h"          //light measurement sensor library
-
+#include <PDM.h>
 #include <WebServer.h>
 #include "bme68xLibrary.h"         //This library is not available in PlatformIO
                                    //Library added to lib folder on the left
@@ -22,6 +22,7 @@
 Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
 #define NEW_GAS_MEAS (BME68X_GASM_VALID_MSK | BME68X_HEAT_STAB_MSK | BME68X_NEW_DATA_MSK)
 #define BH1745NUC_DEVICE_ADDRESS_38 0x38    //light measurement sensor I2C address
+#define BIT_PER_SAMPLE 16
 BH1745NUC bh1745nuc = BH1745NUC();
 void readLightMeasurements();
 //define OLED screen dimensions -----------
@@ -29,6 +30,13 @@ void readLightMeasurements();
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 #define OLED_RESET     -1 // Reset pin # 
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+// output channels - SOUND
+static const char channels = 1;
+static const int frequency = 16000; //sample frequency
+short sampleBuffer[256];
+volatile int samplesRead;
+int recordingStatus = 0; //0 = not recording, 1 = recording
+PDMClass PDM(2,3);
 
 //create OLED display object "display" ----------
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
@@ -74,6 +82,9 @@ void handle_getPressure();
 void handle_ClimateData();
 void handle_getRGBC();
 void addCORS();
+void handle_getSoundLevel();
+void getSoundSample();
+void onPDMdata();
 String HTML();
 String temp =     "";
 String humid =    "";
@@ -82,6 +93,7 @@ String red="";
 String green="";
 String blue="";
 String clear="";
+String noiseLevel ="";
 //---------------------------------------------
 void addCORS() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -144,6 +156,13 @@ void setup() {
   bme.setSeqSleep(BME68X_ODR_250_MS);
 	bme.setHeaterProf(tempProf, durProf, 3);
 	bme.setOpMode(BME68X_SEQUENTIAL_MODE);
+  //Sound
+  PDM.onReceive(onPDMdata);
+  if (!PDM.begin(channels, frequency)) {
+    Serial.println("Failed to start PDM!");
+    while (1);
+  }
+  PDM.setGain(30);
   /*//Setting the AP Mode with SSID, Password, and Max Connection Limit
   if(WiFi.softAP(ap_ssid,ap_password,1,false,max_connections)==true){
     Serial.print("Access Point is Created with SSID: ");
@@ -183,6 +202,7 @@ void setup() {
   server.on("/getHumidity",handle_getHumidity);
   server.on("/getPressure",handle_getPressure);
   server.on("/getRGBC",handle_getRGBC);
+  server.on("/getSoundLevel",handle_getSoundLevel);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -205,6 +225,57 @@ void sendCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
+
+//Callback function to process the data from the PDM microphone.
+//NOTE: This callback is executed as part of an ISR.
+//Therefore using `Serial` to print messages inside this function isn't supported.
+void onPDMdata() {
+  // Query the number of available bytes
+  int bytesAvailable = PDM.available();
+
+  // Read into the sample buffer
+  PDM.read(sampleBuffer, bytesAvailable);
+  // 16-bit, 2 bytes per sample
+  samplesRead = bytesAvailable / 2;
+}
+uint32_t lastSoundSend = 0;
+const uint32_t SOUND_INTERVAL_MS = 1000;
+long soundSum = 0;
+int soundCount =0;
+void getSoundSample() {
+
+  //wait for audio samples to be read
+  
+  if (samplesRead>0) {
+    int n = samplesRead;
+    samplesRead=0;
+      for (int i=0; i<n; i++) {
+        //client.print("Noise Level: " + String(sampleBuffer[i]) + '\n');
+        //delay(350);
+        soundSum += abs(sampleBuffer[i]);
+        soundCount++;
+        /*Serial.println(sampleBuffer[i]);
+        display.clearDisplay();               //clears OLED screen
+        display.setCursor(0,30);   
+            //display sound value, higher value = louder
+                                              //can you visualize this as a graph?
+        display.display();                    //needs to be invoked for the display to work
+        */
+      }
+      uint32_t now = millis();
+      if (now - lastSoundSend >= SOUND_INTERVAL_MS && soundCount > 0) {
+        int avgSound = soundSum/soundCount; // avg
+        Serial.println("Noise Level: "+String(avgSound));
+        noiseLevel = String(avgSound);
+        delay(300);
+        soundSum = 0;
+        soundCount=0;
+        lastSoundSend=now;
+      }  
+  }
+}
+
+
 void fetchClimateData()
 {
   
@@ -269,6 +340,7 @@ void loop() {
   }
   
   readLightMeasurements();
+  getSoundSample();
   display.clearDisplay();
   display.println("Make a choice on light");
   display.display();
@@ -327,9 +399,14 @@ void handle_redOFF()
   redLED_status=false;
   server.send(200, "text/html","OK");
 }
+void handle_getSoundLevel(){
+  addCORS();
+  delay(200);
+  server.send(200, "text/plain", noiseLevel);
+}
 void handle_ClimateData(){
   addCORS();
-  delay(1000);
+  delay(200);
   String climateData[3];
   climateData[0]=temp;
   climateData[1]=humid; 
@@ -339,7 +416,7 @@ void handle_ClimateData(){
 }
 void handle_getRGBC(){
   addCORS();
-  delay(1000);
+  delay(200);
   String rgbcData[4];
   rgbcData[0]=red;
   rgbcData[1]=green; 
