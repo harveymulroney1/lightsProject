@@ -12,6 +12,7 @@
 #include "BH1745NUC.h"          //light measurement sensor library
 #include <PDM.h>
 #include <WebServer.h>
+#include "Adafruit_MAX1704X.h" //fuel gauge library
 #include "bme68xLibrary.h"         //This library is not available in PlatformIO
                                    //Library added to lib folder on the left
 //RGB LED declarations ----------------
@@ -25,6 +26,7 @@ Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
 #define BIT_PER_SAMPLE 16
 BH1745NUC bh1745nuc = BH1745NUC();
 void readLightMeasurements();
+Adafruit_MAX17048 maxlipo;   //creates fuel gauge object
 //define OLED screen dimensions -----------
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
@@ -41,20 +43,28 @@ PDMClass PDM(2,3);
 //create OLED display object "display" ----------
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Bme68x bme;  // climate sensor variable
-
+float battPercentage;
 int climateDelay = 2000; // in MS
 unsigned long previousMillis = 0;
 //-------Web server parameters ----------
 
 //specifies the SSID and Password of the soft Access Point
-const char* ap_ssid = "GowersSmall";           //sets soft Access Point SSID
-const char* ap_password= "mattyisalegend";    //sets access Point Password
+const char* ap_ssid = "SKY5RTWG";           //sets soft Access Point SSID
+const char* ap_password= "GNQjpL6Kmk5CWN";    //sets access Point Password
+// MOBILE
+/* const char* ap_ssid = "Harvey's iPhone";
+const char* ap_password= "harvey123"; */
 uint8_t max_connections=8;               //Sets maximum Connection Limit for AP
 int current_stations=0, new_stations=0;  //variables to hold the number of connected clients
 
-IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
-IPAddress gateway(10, 45, 1, 1);
-IPAddress subnet(255, 255, 255, 0);      
+//IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
+//IPAddress gateway(10, 45, 1, 1);
+IPAddress local_IP(192, 168, 0, 50); //Joe - changed these so they work on my wifi, change them back if necessary
+IPAddress gateway(192, 168, 0, 1);
+IPAddress subnet(255, 255, 255, 0);  
+/* IPAddress local_IP(172,20,10,6);
+IPAddress gateway(172,20,10,1);
+IPAddress subnet(255,255,255,240); */
 IPAddress IP;
 
 //specifies the Webserver instance to connect with at HTTP Port: 80
@@ -67,6 +77,7 @@ bool redLED_status=false, greenLED_status=false, blueLED_status=false;
 int  redValue = 0, greenValue = 0, blueValue = 0;
 
 //declares the functions implemented in the program
+float readFuelGaugeMeasurement();
 void handle_OnConnect();
 void handle_redON();
 void handle_redOFF();
@@ -80,6 +91,9 @@ void handle_getTemp();
 void handle_getHumidity();
 void handle_getPressure();
 void handle_ClimateData();
+void handle_getBattery();
+void handle_lowPowerModeOn();
+void handle_lowPowerModeOff();
 void handle_getRGBC();
 void addCORS();
 void handle_getSoundLevel();
@@ -89,6 +103,7 @@ String HTML();
 String temp =     "";
 String humid =    "";
 String pressure = "";
+bool lowPowerMode = false;
 String red="";
 String green="";
 String blue="";
@@ -106,7 +121,9 @@ void setup() {
   Serial.println();
   display.setCursor(0,10);                 //Start at top-left corner (Col=0, Row =10)
   display.setTextSize(1);                 //Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE);  
+  display.setTextColor(SSD1306_WHITE);
+  WiFi.disconnect(true);
+  delay(1000);
   //-----------
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -189,6 +206,11 @@ void setup() {
   delay(2000);
   Serial.print("Device IP: ");
   Serial.println(WiFi.localIP());
+  while(!maxlipo.begin()){
+    Serial.println("Could not find a MAX1704X sensor");
+    delay(2000);
+  }
+  Serial.print(F("Fuel Gauge sensor found!"));
   //Specifying the functions which will be executed upon corresponding GET request from the client
   server.on("/",handle_OnConnect);
   server.on("/redON",handle_redON);
@@ -201,6 +223,9 @@ void setup() {
   server.on("/getTemp",handle_getTemp);
   server.on("/getHumidity",handle_getHumidity);
   server.on("/getPressure",handle_getPressure);
+  server.on("/getBattery",handle_getBattery);
+  server.on("/lowPowerModeOn", handle_lowPowerModeOn);
+  server.on("/lowPowerModeOff", handle_lowPowerModeOff);
   server.on("/getRGBC",handle_getRGBC);
   server.on("/getSoundLevel",handle_getSoundLevel);
   server.onNotFound(handle_NotFound);
@@ -314,23 +339,7 @@ void readLightMeasurements() {
 void loop() {
   //Assign the server to handle the clients
   server.handleClient();
-  
-  //Continuously check how many stations are connected to Soft AP and notify whenever a new station is connected or disconnected
-  //new_stations=WiFi.softAPgetStationNum();
-  
-   //Device is Connected
-  /*if(current_stations<new_stations){
-    current_stations=new_stations;
-    Serial.print("New Device Connected to SoftAP... Total Connections: ");
-    Serial.println(current_stations);
-    Serial.println(WiFi.softAPIP());
-  }*/
-  //device is Disconnected
-  /*if(current_stations>new_stations) {
-    current_stations=new_stations;
-    Serial.print("Device disconnected from SoftAP... Total Connections: ");
-    Serial.println(current_stations);
-  }*/
+  readFuelGaugeMeasurement();
   
   //displayParameters();
   unsigned long currentMillis = millis();
@@ -414,6 +423,17 @@ void handle_ClimateData(){
   String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2];
   server.send(200, "text/plain", combinedData);
 }
+void handle_getBattery(){
+  addCORS();
+  delay(500);
+  float battPercent = readFuelGaugeMeasurement();
+  if(isnan(battPercent)){
+    Serial.println("Failed to read battery percentage");
+    server.send(500,"text/plain","Error");
+    return;
+  }
+  server.send(200,"text/plain",(String(battPercentage,1))); // read with a % other side
+}
 void handle_getRGBC(){
   addCORS();
   delay(200);
@@ -467,8 +487,58 @@ void handle_blueOFF(){
   blueLED_status=false;
   server.send(200, "text/html","OK");
 }
+
+void handle_lowPowerModeOn(){
+  lowPowerMode = true;
+  blueLED_status = false;
+  redLED_status = false;
+  greenLED_status = false;
+  display.ssd1306_command(SSD1306_DISPLAYOFF); //lights and display off
+  climateDelay = 1800000; // half an hour
+  Serial.println("Activated low power mode");
+  server.send(200, "text/plain", "Activated low power mode");
+}
+
+void handle_lowPowerModeOff(){
+  lowPowerMode = false;
+  climateDelay = 2000;
+  display.ssd1306_command(SSD1306_DISPLAYON);
+  Serial.println("Deactivated low power mode");
+  server.send(200, "text/plain", "Deactivated low power mode");
+}
+
 void handle_NotFound() {
    server.send(404, "text/plain", "Not found");
+}
+
+
+float readFuelGaugeMeasurement(){
+  float cellVoltage = maxlipo.cellVoltage();  //reads cell voltage
+  if (isnan(cellVoltage)) {
+    Serial.println("Failed to read cell voltage, check battery is connected!");
+    delay(1000);
+    return NAN;
+  }
+  
+  float battPercent = (cellVoltage/4.2)*100;     //converts cell voltage reading to proportion of 4.2v
+  
+  if(battPercent >=100.0)
+    battPercent = 100;
+  battPercentage = battPercent;
+  display.setCursor(0,18);                  //Start at top-left corner (Col=0, Row=18)
+  display.print(F("Voltage: "));
+  display.print(String(cellVoltage, 2));    //converts integer to String before invoking display() function
+                                            //a simple print with cursor spec will position value at the
+                                            //end of previous cursor position
+
+  display.setCursor(0,30);                  //Col=0,Row=30
+  display.print(F("Proportion: "));
+
+  display.print(String(battPercent, 1)); 
+  display.print(F("%"));
+  display.display(); 
+  delay(1000);  // save energy, dont query too often!
+  return battPercent;
 }
 /*
 void handle_OnConnect(){
