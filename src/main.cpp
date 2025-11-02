@@ -63,7 +63,7 @@ bool redLED_status=false, greenLED_status=false, blueLED_status=false;
 int  redValue = 0, greenValue = 0, blueValue = 0;
 
 //declares the functions implemented in the program
-void readFuelGaugeMeasurement();
+float readFuelGaugeMeasurement();
 void handle_OnConnect();
 void handle_redON();
 void handle_redOFF();
@@ -77,6 +77,7 @@ void handle_getTemp();
 void handle_getHumidity();
 void handle_getPressure();
 void handle_ClimateData();
+void handle_getBattery();
 void addCORS();
 String HTML();
 String temp =     "";
@@ -307,7 +308,12 @@ void handle_ClimateData(){
 void handle_getBattery(){
   addCORS();
   delay(500);
-  readFuelGaugeMeasurement();
+  float battPercent = readFuelGaugeMeasurement();
+  if(isnan(battPercent)){
+    Serial.println("Failed to read battery percentage");
+    server.send(500,"text/plain","Error");
+    return;
+  }
   server.send(200,"text/plain",(String(battPercentage,1))); // read with a % other side
 }
 void handle_getTemp(){
@@ -357,19 +363,19 @@ void handle_NotFound() {
 }
 
 
-void readFuelGaugeMeasurement(){
+float readFuelGaugeMeasurement(){
   float cellVoltage = maxlipo.cellVoltage();  //reads cell voltage
   if (isnan(cellVoltage)) {
     Serial.println("Failed to read cell voltage, check battery is connected!");
     delay(1000);
-    return;
+    return NAN;
   }
   
   float battPercent = (cellVoltage/4.2)*100;     //converts cell voltage reading to proportion of 4.2v
-  battPercentage = battPercent;
+  
   if(battPercent >=100.0)
     battPercent = 100;
-  
+  battPercentage = battPercent;
   display.setCursor(0,18);                  //Start at top-left corner (Col=0, Row=18)
   display.print(F("Voltage: "));
   display.print(String(cellVoltage, 2));    //converts integer to String before invoking display() function
@@ -383,6 +389,7 @@ void readFuelGaugeMeasurement(){
   display.print(F("%"));
   display.display(); 
   delay(1000);  // save energy, dont query too often!
+  return battPercent;
 }
 /*
 void handle_OnConnect(){
