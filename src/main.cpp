@@ -109,6 +109,7 @@ String green="";
 String blue="";
 String clear="";
 String noiseLevel ="";
+String zone = "Zone 1";
 //---------------------------------------------
 void addCORS() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -416,11 +417,9 @@ void handle_getSoundLevel(){
 void handle_ClimateData(){
   addCORS();
   delay(200);
-  String climateData[3];
-  climateData[0]=temp;
-  climateData[1]=humid; 
-  climateData[2]=pressure;
-  String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2];
+  readLightMeasurements();
+  getSoundSample();
+  String combinedData = zone + "," + temp + "," + noiseLevel + "," + clear;
   server.send(200, "text/plain", combinedData);
 }
 void handle_getBattery(){
