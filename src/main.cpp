@@ -82,6 +82,7 @@ void handle_ClimateData();
 void handle_getBattery();
 void handle_lowPowerModeOn();
 void handle_lowPowerModeOff();
+void handle_getLowPower();
 void addCORS();
 String HTML();
 String temp =     "";
@@ -198,6 +199,7 @@ void setup() {
   server.on("/getBattery",handle_getBattery);
   server.on("/lowPowerModeOn", handle_lowPowerModeOn);
   server.on("/lowPowerModeOff", handle_lowPowerModeOff);
+  server.on("/getLowPower", handle_getLowPower);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -385,6 +387,17 @@ void handle_lowPowerModeOff(){
   display.ssd1306_command(SSD1306_DISPLAYON);
   Serial.println("Deactivated low power mode");
   server.send(200, "text/plain", "Deactivated low power mode");
+}
+
+void handle_getLowPower(){
+  addCORS();
+  if (lowPowerMode)
+  {
+    server.send(200, "text/plain", "true");
+  }
+  else{
+    server.send(200, "text/plain", "false");
+  }
 }
 
 void handle_NotFound() {
