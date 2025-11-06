@@ -83,12 +83,15 @@ void handle_getBattery();
 void handle_lowPowerModeOn();
 void handle_lowPowerModeOff();
 void handle_getLowPower();
+void handle_autoLowPowerModeOn();
+void handle_autoLowPowerModeOff();
 void addCORS();
 String HTML();
 String temp =     "";
 String humid =    "";
 String pressure = "";
 bool lowPowerMode = false;
+bool autoLowPower = true;
 //---------------------------------------------
 void addCORS() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
@@ -200,6 +203,8 @@ void setup() {
   server.on("/lowPowerModeOn", handle_lowPowerModeOn);
   server.on("/lowPowerModeOff", handle_lowPowerModeOff);
   server.on("/getLowPower", handle_getLowPower);
+  server.on("/autoLowPowerModeOff", handle_autoLowPowerModeOff);
+  server.on("/autoLowPowerModeOn", handle_autoLowPowerModeOn);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -389,6 +394,18 @@ void handle_lowPowerModeOff(){
   server.send(200, "text/plain", "Deactivated low power mode");
 }
 
+void handle_autoLowPowerModeOn(){
+  autoLowPower = true;
+  Serial.println("Activated automatic power saving");
+  server.send(200, "text/plain", "Activated automatic power saving");
+}
+
+void handle_autoLowPowerModeOff(){
+  autoLowPower = false;
+  Serial.println("Disabled automatic power saving");
+  server.send(200, "text/plain", "Disabled automatic power saving");
+}
+
 void handle_getLowPower(){
   addCORS();
   if (lowPowerMode)
@@ -431,6 +448,9 @@ float readFuelGaugeMeasurement(){
   display.print(F("%"));
   display.display(); 
   delay(1000);  // save energy, dont query too often!
+  if (battPercent < 20 && autoLowPower){ //low power mode on low charge
+    handle_lowPowerModeOn();
+  }
   return battPercent;
 }
 /*
