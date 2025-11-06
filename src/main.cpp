@@ -448,7 +448,7 @@ float readFuelGaugeMeasurement(){
   display.print(F("%"));
   display.display(); 
   delay(1000);  // save energy, dont query too often!
-  if (battPercent < 20 && autoLowPower){ //low power mode on low charge
+  if (battPercent < 20 && autoLowPower && !lowPowerMode){ //low power mode on low charge
     handle_lowPowerModeOn();
   }
   return battPercent;
