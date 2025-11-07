@@ -102,6 +102,9 @@ void handle_ClimateData();
 void handle_getBattery();
 void handle_lowPowerModeOn();
 void handle_lowPowerModeOff();
+void handle_getLowPower();
+void handle_autoLowPowerModeOn();
+void handle_autoLowPowerModeOff();
 void handle_sanityCheck();
 void handle_getRGBC();
 void addCORS();
@@ -113,6 +116,7 @@ String temp =     "";
 String humid =    "";
 String pressure = "";
 bool lowPowerMode = false;
+bool autoLowPower = true;
 String red="";
 String green="";
 String blue="";
@@ -251,6 +255,9 @@ void setup() {
   server.on("/getBattery",handle_getBattery);
   server.on("/lowPowerModeOn", handle_lowPowerModeOn);
   server.on("/lowPowerModeOff", handle_lowPowerModeOff);
+  server.on("/getLowPower", handle_getLowPower);
+  server.on("/autoLowPowerModeOff", handle_autoLowPowerModeOff);
+  server.on("/autoLowPowerModeOn", handle_autoLowPowerModeOn);
   server.on("/getRGBC",handle_getRGBC);
   server.on("/getSoundLevel",handle_getSoundLevel);
   server.on("/getStoredReadings", handle_GetStoredReadings);
@@ -643,6 +650,29 @@ void handle_lowPowerModeOff(){
   server.send(200, "text/plain", "Deactivated low power mode");
 }
 
+void handle_autoLowPowerModeOn(){
+  autoLowPower = true;
+  Serial.println("Activated automatic power saving");
+  server.send(200, "text/plain", "Activated automatic power saving");
+}
+
+void handle_autoLowPowerModeOff(){
+  autoLowPower = false;
+  Serial.println("Disabled automatic power saving");
+  server.send(200, "text/plain", "Disabled automatic power saving");
+}
+
+void handle_getLowPower(){
+  addCORS();
+  if (lowPowerMode)
+  {
+    server.send(200, "text/plain", "true");
+  }
+  else{
+    server.send(200, "text/plain", "false");
+  }
+}
+
 void handle_NotFound() {
    server.send(404, "text/plain", "Not found");
 }
@@ -673,6 +703,10 @@ float readFuelGaugeMeasurement(){
   display.print(String(battPercent, 1)); 
   display.print(F("%"));
   display.display(); 
+  delay(1000);  // save energy, dont query too often!
+  if (battPercent < 20 && autoLowPower && !lowPowerMode){ //low power mode on low charge
+    handle_lowPowerModeOn();
+  }
    // save energy, dont query too often!
   batteryLastUpdate = millis();
   return battPercent;
