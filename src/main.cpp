@@ -407,11 +407,12 @@ void loop() {
   unsigned long currentMillis = millis();
   if(currentMillis - previousMillis >= climateDelay) {
     fetchClimateData();
+    readLightMeasurements();
+    getSoundSample();
     previousMillis = currentMillis;
   }
   
-  readLightMeasurements();
-  getSoundSample();
+
   display.clearDisplay();
   display.println("Make a choice on light");
   display.display();
