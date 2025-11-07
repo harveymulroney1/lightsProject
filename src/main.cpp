@@ -1,17 +1,19 @@
-
 //This code configures the Raspberry Pico W into Soft Access Point mode 
 //and will act as a web server for all the connecting devices. 
 //The application will turn ON and OFF four different colours of the RGB LEDs
 //according to commands from the clients.
-
 #include <Arduino.h>
 #include <WiFi.h>
+#include <SD.h>
+#include <SPI.h>
 #include "Adafruit_NeoPixel.h"           //include the RGB library
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include "BH1745NUC.h"          //light measurement sensor library
 #include <PDM.h>
 #include <WebServer.h>
+#include <ctime>
+#include "time.h"
 #include "Adafruit_MAX1704X.h" //fuel gauge library
 #include "bme68xLibrary.h"         //This library is not available in PlatformIO
                                    //Library added to lib folder on the left
@@ -39,18 +41,23 @@ short sampleBuffer[256];
 volatile int samplesRead;
 int recordingStatus = 0; //0 = not recording, 1 = recording
 PDMClass PDM(2,3);
-
 //create OLED display object "display" ----------
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Bme68x bme;  // climate sensor variable
 float battPercentage;
 int climateDelay = 2000; // in MS
 unsigned long previousMillis = 0;
+unsigned long lastUpdateMillis =0;
+unsigned long dataTimeOut = 120000;
+unsigned long climateLastUpdate = 0;
+unsigned long batteryLastUpdate = 0;
+unsigned long rgbcLastUpdate = 0;
+unsigned long noiseLastUpdate = 0;
 //-------Web server parameters ----------
 
 //specifies the SSID and Password of the soft Access Point
-const char* ap_ssid = "SKY5RTWG";           //sets soft Access Point SSID
-const char* ap_password= "GNQjpL6Kmk5CWN";    //sets access Point Password
+const char* ap_ssid = "GowersSmall";           //sets soft Access Point SSID
+const char* ap_password= "mattyisalegend";    //sets access Point Password
 // MOBILE
 /* const char* ap_ssid = "Harvey's iPhone";
 const char* ap_password= "harvey123"; */
@@ -59,8 +66,8 @@ int current_stations=0, new_stations=0;  //variables to hold the number of conne
 
 //IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
 //IPAddress gateway(10, 45, 1, 1);
-IPAddress local_IP(192, 168, 0, 50); //Joe - changed these so they work on my wifi, change them back if necessary
-IPAddress gateway(192, 168, 0, 1);
+IPAddress local_IP(10, 45, 1, 14); 
+IPAddress gateway(10, 45, 1, 1);
 IPAddress subnet(255, 255, 255, 0);  
 /* IPAddress local_IP(172,20,10,6);
 IPAddress gateway(172,20,10,1);
@@ -80,6 +87,7 @@ int  redValue = 0, greenValue = 0, blueValue = 0;
 float readFuelGaugeMeasurement();
 void handle_OnConnect();
 void handle_redON();
+bool isDataFresh();
 void handle_redOFF();
 void handle_greenON();
 void handle_greenOFF();
@@ -94,6 +102,7 @@ void handle_ClimateData();
 void handle_getBattery();
 void handle_lowPowerModeOn();
 void handle_lowPowerModeOff();
+void handle_sanityCheck();
 void handle_getRGBC();
 void addCORS();
 void handle_getSoundLevel();
@@ -110,6 +119,15 @@ String blue="";
 String clear="";
 String noiseLevel ="";
 //---------------------------------------------
+/* struct tm getDateTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    // Return an empty/default struct if time not set
+    struct tm empty = {};
+    return empty;
+  }
+  return timeinfo;
+} */
 void addCORS() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -123,7 +141,8 @@ void setup() {
   display.setTextSize(1);                 //Normal 1:1 pixel scale
   display.setTextColor(SSD1306_WHITE);
   WiFi.disconnect(true);
-  delay(1000);
+  delay(300);
+  //configTime(0, 0, "pool.ntp.org");    // UTC time
   //-----------
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -134,11 +153,15 @@ void setup() {
     WS2812B.show();
   // the library initializes this with an Adafruit splash screen.
   display.display();  //this function is required to display image
-  delay(2000); // Pause for 2 seconds
+  delay(1000); // Pause for 2 seconds
 
   //configure Pico WiFi
   //WiFi.mode(WIFI_AP);                            //configures Pico WiFi as soft Access Point
-  
+  if (!SD.begin(SS)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    
+  }
   //WiFi.softAPConfig(local_IP, gateway, subnet);  //configures static IP for the soft AP
   WiFi.mode(WIFI_STA);
   WiFi.config(local_IP,gateway, subnet);
@@ -217,6 +240,7 @@ void setup() {
   server.on("/redOFF",handle_redOFF);
   server.on("/greenON",handle_greenON);
   server.on("/greenOFF",handle_greenOFF);
+  server.on("/sanityCheck",handle_sanityCheck);
   server.on("/blueON",handle_blueON);
   server.on("/blueOFF",handle_blueOFF);
   server.on("/getClimateData",handle_ClimateData);
@@ -245,12 +269,28 @@ delay(3000);
 
 void fetchClimateData();
 void sendCORSHeaders();
+void saveToSD();
 void sendCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+void saveToSD(String data){
+  File dataFile = SD.open("readings.txt",FILE_WRITE);
+
+  if(dataFile)
+  {
+    data += "\n";
+    dataFile.println(data);
+    dataFile.close();
+    Serial.println("Written to SD: "+data);
+    
+  }
+  else{
+    Serial.println("Error opening readings.txt");
+  }
+}
 //Callback function to process the data from the PDM microphone.
 //NOTE: This callback is executed as part of an ISR.
 //Therefore using `Serial` to print messages inside this function isn't supported.
@@ -307,6 +347,7 @@ void fetchClimateData()
   bme68xData data;
   uint8_t nFieldsLeft = 0;
   delay(200);
+  climateLastUpdate = millis();
   if(bme.fetchData()){
     do{
       nFieldsLeft = bme.getData(data);
@@ -318,6 +359,25 @@ void fetchClimateData()
     }while(nFieldsLeft);
   }
 }
+/* void fetchClimateData()
+{
+  
+  bme68xData data;
+  uint8_t nFieldsLeft = 0;
+  delay(200);
+  climateLastUpdate = millis();
+  if(bme.fetchData()){
+    do{
+      nFieldsLeft = bme.getData(data);
+      temp =  String(data.temperature-4.49);
+      humid = String(data.humidity);
+      pressure =  String(data.pressure);
+      //if(data.gas_index == 2) Sequential mode sleeps after this measurement
+          delay(250);
+    }while(nFieldsLeft);
+  }
+} */
+
 void readLightMeasurements() {
   if(!bh1745nuc.read()) {
     Serial.println("Failed to read light data from sensor!");
@@ -339,7 +399,8 @@ void readLightMeasurements() {
 void loop() {
   //Assign the server to handle the clients
   server.handleClient();
-  readFuelGaugeMeasurement();
+  //delay(1000);
+  //readFuelGaugeMeasurement();
   
   //displayParameters();
   unsigned long currentMillis = millis();
@@ -416,16 +477,21 @@ void handle_getSoundLevel(){
 void handle_ClimateData(){
   addCORS();
   delay(200);
-  String climateData[3];
-  climateData[0]=temp;
-  climateData[1]=humid; 
-  climateData[2]=pressure;
-  String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2];
+  String climateData[4];
+  climateData[0]="Zone 1";
+  climateData[1]=temp;
+  climateData[2]=noiseLevel;
+  climateData[3]=clear;
+  //climateData[1]=humid; 
+  //climateData[2]=pressure;
+  String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2] + "," + climateData[3];
+  saveToSD(combinedData); // SAVES DATA TO SD
+  delay(200);
   server.send(200, "text/plain", combinedData);
 }
 void handle_getBattery(){
   addCORS();
-  delay(500);
+  delay(100);
   float battPercent = readFuelGaugeMeasurement();
   if(isnan(battPercent)){
     Serial.println("Failed to read battery percentage");
@@ -433,6 +499,27 @@ void handle_getBattery(){
     return;
   }
   server.send(200,"text/plain",(String(battPercentage,1))); // read with a % other side
+}
+bool isDataFresh(){
+  if((millis()-climateLastUpdate)<dataTimeOut)
+  {
+    return true;
+  }
+  return false;
+}
+void handle_sanityCheck(){
+  addCORS();
+  delay(200);
+  if(isDataFresh()){
+    server.send(200, "text/plain","Data OK");
+    return;
+  }
+  else{
+    server.send(500, "text/plain","Data Stale");
+    return;
+  }
+
+  
 }
 void handle_getRGBC(){
   addCORS();
@@ -537,7 +624,8 @@ float readFuelGaugeMeasurement(){
   display.print(String(battPercent, 1)); 
   display.print(F("%"));
   display.display(); 
-  delay(1000);  // save energy, dont query too often!
+   // save energy, dont query too often!
+  batteryLastUpdate = millis();
   return battPercent;
 }
 /*
