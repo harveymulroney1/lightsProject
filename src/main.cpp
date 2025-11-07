@@ -118,6 +118,7 @@ String green="";
 String blue="";
 String clear="";
 String noiseLevel ="";
+String zone = "Zone 1";
 //---------------------------------------------
 /* struct tm getDateTime() {
   struct tm timeinfo;
@@ -478,6 +479,8 @@ void handle_ClimateData(){
   addCORS();
   delay(200);
   String climateData[4];
+  readLightMeasurements();
+  getSoundSample();
   climateData[0]="Zone 1";
   climateData[1]=temp;
   climateData[2]=noiseLevel;
@@ -487,6 +490,8 @@ void handle_ClimateData(){
   String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2] + "," + climateData[3];
   saveToSD(combinedData); // SAVES DATA TO SD
   delay(200);
+
+  String combinedData = zone + "," + temp + "," + noiseLevel + "," + clear;
   server.send(200, "text/plain", combinedData);
 }
 void handle_getBattery(){
