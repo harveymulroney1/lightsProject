@@ -253,6 +253,8 @@ void setup() {
   server.on("/lowPowerModeOff", handle_lowPowerModeOff);
   server.on("/getRGBC",handle_getRGBC);
   server.on("/getSoundLevel",handle_getSoundLevel);
+  server.on("/getStoredReadings", handle_GetStoredReadings);
+  server.on("/clearStoredReadings", handle_ClearStoredReadings);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -282,7 +284,7 @@ void saveToSD(String data){
 
   if(dataFile)
   {
-    data += "\n";
+    
     dataFile.println(data);
     dataFile.close();
     Serial.println("Written to SD: "+data);
@@ -457,6 +459,46 @@ void handle_OnConnect(){
   Serial.println("Client Connected");
   server.send(200, "text/html","OK"); 
 }
+
+void handle_GetStoredReadings(){
+  addCORS();
+  File file = SD.open("readings.txt");
+  if(!file)
+  {
+    server.send(404,"text/plain","No Stored Readings Found");
+    Serial.println("No Readings found on SD");
+    return;
+  }
+  String response = "";
+  while(file.available()){
+    response+= file.readStringUntil('\n');
+    response +="\n";
+    if(response.length()>2000){
+      server.sendContent(response); // chunk limit
+      response="";
+    }
+  }
+  file.close();
+  if(response.length()>0)
+  {
+    server.send(200,"text/plain",response);
+  }
+  else{
+    server.send(200,"text/plain","");
+  }
+  Serial.println("Sent stored readings to base station");
+  Serial.println("Clearing stored Readings");
+}
+
+void handle_ClearStoredReadings() {
+  if (SD.exists("/readings.txt")) {
+    SD.remove("/readings.txt");
+    server.send(200, "text/plain", "Cleared stored readings.");
+    Serial.println("Cleared readings.txt.");
+  } else {
+    server.send(404, "text/plain", "No readings.txt to clear.");
+  }
+}
 void handle_redON(){
   Serial.println("RED ON");
   addCORS();
@@ -480,8 +522,8 @@ void handle_ClimateData(){
   addCORS();
   delay(200);
   String climateData[4];
-  readLightMeasurements();
-  getSoundSample();
+  //readLightMeasurements();
+  //getSoundSample();
   climateData[0]="Zone 1";
   climateData[1]=temp;
   climateData[2]=noiseLevel;
