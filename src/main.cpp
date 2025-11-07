@@ -521,20 +521,17 @@ void handle_getSoundLevel(){
 void handle_ClimateData(){
   addCORS();
   delay(200);
-  String climateData[4];
+  String climateData[5];
   //readLightMeasurements();
   //getSoundSample();
-  climateData[0]="Zone 1";
-  climateData[1]=temp;
-  climateData[2]=noiseLevel;
-  climateData[3]=clear;
-  //climateData[1]=humid; 
-  //climateData[2]=pressure;
-  String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2] + "," + climateData[3];
+  //Get current Unix timestamp
+  std::time_t now = std::time(nullptr);
+  String unix_time = String((long)now);   // convert to String
+
+  String combinedData = zone + "," + temp + "," + noiseLevel + "," + clear + "," + unix_time;
   saveToSD(combinedData); // SAVES DATA TO SD
   delay(200);
 
-  String combinedData = zone + "," + temp + "," + noiseLevel + "," + clear;
   server.send(200, "text/plain", combinedData);
 }
 void handle_getBattery(){
@@ -546,7 +543,11 @@ void handle_getBattery(){
     server.send(500,"text/plain","Error");
     return;
   }
-  server.send(200,"text/plain",(String(battPercentage,1))); // read with a % other side
+  //Get current Unix timestamp
+  std::time_t now = std::time(nullptr);
+  String unix_time = String((long)now);   // convert to String
+  String combinedBatteryData = zone + "," + String(battPercentage) + "," + unix_time;
+  server.send(200,"text/plain",combinedBatteryData); // read with a % other side
 }
 bool isDataFresh(){
   if((millis()-climateLastUpdate)<dataTimeOut)
