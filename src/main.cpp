@@ -1,15 +1,19 @@
-
 //This code configures the Raspberry Pico W into Soft Access Point mode 
 //and will act as a web server for all the connecting devices. 
 //The application will turn ON and OFF four different colours of the RGB LEDs
 //according to commands from the clients.
-
 #include <Arduino.h>
 #include <WiFi.h>
+#include <SD.h>
+#include <SPI.h>
 #include "Adafruit_NeoPixel.h"           //include the RGB library
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include "BH1745NUC.h"          //light measurement sensor library
+#include <PDM.h>
 #include <WebServer.h>
+#include <ctime>
+#include "time.h"
 #include "Adafruit_MAX1704X.h" //fuel gauge library
 #include "bme68xLibrary.h"         //This library is not available in PlatformIO
                                    //Library added to lib folder on the left
@@ -20,25 +24,40 @@
 
 Adafruit_NeoPixel WS2812B(NUM_PIXELS, PIN_WS2812B, NEO_GRB + NEO_KHZ800);
 #define NEW_GAS_MEAS (BME68X_GASM_VALID_MSK | BME68X_HEAT_STAB_MSK | BME68X_NEW_DATA_MSK)
-
+#define BH1745NUC_DEVICE_ADDRESS_38 0x38    //light measurement sensor I2C address
+#define BIT_PER_SAMPLE 16
+BH1745NUC bh1745nuc = BH1745NUC();
+void readLightMeasurements();
 Adafruit_MAX17048 maxlipo;   //creates fuel gauge object
 //define OLED screen dimensions -----------
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
 #define OLED_RESET     -1 // Reset pin # 
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-
+// output channels - SOUND
+static const char channels = 1;
+static const int frequency = 16000; //sample frequency
+short sampleBuffer[256];
+volatile int samplesRead;
+int recordingStatus = 0; //0 = not recording, 1 = recording
+PDMClass PDM(2,3);
 //create OLED display object "display" ----------
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 Bme68x bme;  // climate sensor variable
 float battPercentage;
 int climateDelay = 2000; // in MS
 unsigned long previousMillis = 0;
+unsigned long lastUpdateMillis =0;
+unsigned long dataTimeOut = 120000;
+unsigned long climateLastUpdate = 0;
+unsigned long batteryLastUpdate = 0;
+unsigned long rgbcLastUpdate = 0;
+unsigned long noiseLastUpdate = 0;
 //-------Web server parameters ----------
 
 //specifies the SSID and Password of the soft Access Point
-const char* ap_ssid = "SKY5RTWG";           //sets soft Access Point SSID
-const char* ap_password= "GNQjpL6Kmk5CWN";    //sets access Point Password
+const char* ap_ssid = "GowersSmall";           //sets soft Access Point SSID
+const char* ap_password= "mattyisalegend";    //sets access Point Password
 // MOBILE
 /* const char* ap_ssid = "Harvey's iPhone";
 const char* ap_password= "harvey123"; */
@@ -47,8 +66,8 @@ int current_stations=0, new_stations=0;  //variables to hold the number of conne
 
 //IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
 //IPAddress gateway(10, 45, 1, 1);
-IPAddress local_IP(192, 168, 0, 50); //Joe - changed these so they work on my wifi, change them back if necessary
-IPAddress gateway(192, 168, 0, 1);
+IPAddress local_IP(10, 45, 1, 14); 
+IPAddress gateway(10, 45, 1, 1);
 IPAddress subnet(255, 255, 255, 0);  
 /* IPAddress local_IP(172,20,10,6);
 IPAddress gateway(172,20,10,1);
@@ -68,6 +87,7 @@ int  redValue = 0, greenValue = 0, blueValue = 0;
 float readFuelGaugeMeasurement();
 void handle_OnConnect();
 void handle_redON();
+bool isDataFresh();
 void handle_redOFF();
 void handle_greenON();
 void handle_greenOFF();
@@ -85,14 +105,34 @@ void handle_lowPowerModeOff();
 void handle_getLowPower();
 void handle_autoLowPowerModeOn();
 void handle_autoLowPowerModeOff();
+void handle_sanityCheck();
+void handle_getRGBC();
 void addCORS();
+void handle_getSoundLevel();
+void getSoundSample();
+void onPDMdata();
 String HTML();
 String temp =     "";
 String humid =    "";
 String pressure = "";
 bool lowPowerMode = false;
 bool autoLowPower = true;
+String red="";
+String green="";
+String blue="";
+String clear="";
+String noiseLevel ="";
+String zone = "Zone 1";
 //---------------------------------------------
+/* struct tm getDateTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    // Return an empty/default struct if time not set
+    struct tm empty = {};
+    return empty;
+  }
+  return timeinfo;
+} */
 void addCORS() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -106,7 +146,8 @@ void setup() {
   display.setTextSize(1);                 //Normal 1:1 pixel scale
   display.setTextColor(SSD1306_WHITE);
   WiFi.disconnect(true);
-  delay(1000);
+  delay(300);
+  //configTime(0, 0, "pool.ntp.org");    // UTC time
   //-----------
   // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
   if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
@@ -117,11 +158,15 @@ void setup() {
     WS2812B.show();
   // the library initializes this with an Adafruit splash screen.
   display.display();  //this function is required to display image
-  delay(2000); // Pause for 2 seconds
+  delay(1000); // Pause for 2 seconds
 
   //configure Pico WiFi
   //WiFi.mode(WIFI_AP);                            //configures Pico WiFi as soft Access Point
-  
+  if (!SD.begin(SS)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    
+  }
   //WiFi.softAPConfig(local_IP, gateway, subnet);  //configures static IP for the soft AP
   WiFi.mode(WIFI_STA);
   WiFi.config(local_IP,gateway, subnet);
@@ -156,6 +201,13 @@ void setup() {
   bme.setSeqSleep(BME68X_ODR_250_MS);
 	bme.setHeaterProf(tempProf, durProf, 3);
 	bme.setOpMode(BME68X_SEQUENTIAL_MODE);
+  //Sound
+  PDM.onReceive(onPDMdata);
+  if (!PDM.begin(channels, frequency)) {
+    Serial.println("Failed to start PDM!");
+    while (1);
+  }
+  PDM.setGain(30);
   /*//Setting the AP Mode with SSID, Password, and Max Connection Limit
   if(WiFi.softAP(ap_ssid,ap_password,1,false,max_connections)==true){
     Serial.print("Access Point is Created with SSID: ");
@@ -193,6 +245,7 @@ void setup() {
   server.on("/redOFF",handle_redOFF);
   server.on("/greenON",handle_greenON);
   server.on("/greenOFF",handle_greenOFF);
+  server.on("/sanityCheck",handle_sanityCheck);
   server.on("/blueON",handle_blueON);
   server.on("/blueOFF",handle_blueOFF);
   server.on("/getClimateData",handle_ClimateData);
@@ -205,6 +258,10 @@ void setup() {
   server.on("/getLowPower", handle_getLowPower);
   server.on("/autoLowPowerModeOff", handle_autoLowPowerModeOff);
   server.on("/autoLowPowerModeOn", handle_autoLowPowerModeOn);
+  server.on("/getRGBC",handle_getRGBC);
+  server.on("/getSoundLevel",handle_getSoundLevel);
+  server.on("/getStoredReadings", handle_GetStoredReadings);
+  server.on("/clearStoredReadings", handle_ClearStoredReadings);
   server.onNotFound(handle_NotFound);
   display.display();
   //Starting the Server
@@ -215,22 +272,92 @@ display.println("HTTP Server Started");
 display.print("IP: ");
 display.println(WiFi.localIP());
 display.display();
+bh1745nuc.begin(BH1745NUC_DEVICE_ADDRESS_38);
+bh1745nuc.startMeasurement();
 delay(3000);
 }
 
 void fetchClimateData();
 void sendCORSHeaders();
+void saveToSD();
 void sendCORSHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
 }
+
+void saveToSD(String data){
+  File dataFile = SD.open("readings.txt",FILE_WRITE);
+
+  if(dataFile)
+  {
+    
+    dataFile.println(data);
+    dataFile.close();
+    Serial.println("Written to SD: "+data);
+    
+  }
+  else{
+    Serial.println("Error opening readings.txt");
+  }
+}
+//Callback function to process the data from the PDM microphone.
+//NOTE: This callback is executed as part of an ISR.
+//Therefore using `Serial` to print messages inside this function isn't supported.
+void onPDMdata() {
+  // Query the number of available bytes
+  int bytesAvailable = PDM.available();
+
+  // Read into the sample buffer
+  PDM.read(sampleBuffer, bytesAvailable);
+  // 16-bit, 2 bytes per sample
+  samplesRead = bytesAvailable / 2;
+}
+uint32_t lastSoundSend = 0;
+const uint32_t SOUND_INTERVAL_MS = 1000;
+long soundSum = 0;
+int soundCount =0;
+void getSoundSample() {
+
+  //wait for audio samples to be read
+  
+  if (samplesRead>0) {
+    int n = samplesRead;
+    samplesRead=0;
+      for (int i=0; i<n; i++) {
+        //client.print("Noise Level: " + String(sampleBuffer[i]) + '\n');
+        //delay(350);
+        soundSum += abs(sampleBuffer[i]);
+        soundCount++;
+        /*Serial.println(sampleBuffer[i]);
+        display.clearDisplay();               //clears OLED screen
+        display.setCursor(0,30);   
+            //display sound value, higher value = louder
+                                              //can you visualize this as a graph?
+        display.display();                    //needs to be invoked for the display to work
+        */
+      }
+      uint32_t now = millis();
+      if (now - lastSoundSend >= SOUND_INTERVAL_MS && soundCount > 0) {
+        int avgSound = soundSum/soundCount; // avg
+        Serial.println("Noise Level: "+String(avgSound));
+        noiseLevel = String(avgSound);
+        delay(300);
+        soundSum = 0;
+        soundCount=0;
+        lastSoundSend=now;
+      }  
+  }
+}
+
+
 void fetchClimateData()
 {
   
   bme68xData data;
   uint8_t nFieldsLeft = 0;
   delay(200);
+  climateLastUpdate = millis();
   if(bme.fetchData()){
     do{
       nFieldsLeft = bme.getData(data);
@@ -242,17 +369,59 @@ void fetchClimateData()
     }while(nFieldsLeft);
   }
 }
+/* void fetchClimateData()
+{
+  
+  bme68xData data;
+  uint8_t nFieldsLeft = 0;
+  delay(200);
+  climateLastUpdate = millis();
+  if(bme.fetchData()){
+    do{
+      nFieldsLeft = bme.getData(data);
+      temp =  String(data.temperature-4.49);
+      humid = String(data.humidity);
+      pressure =  String(data.pressure);
+      //if(data.gas_index == 2) Sequential mode sleeps after this measurement
+          delay(250);
+    }while(nFieldsLeft);
+  }
+} */
+
+void readLightMeasurements() {
+  if(!bh1745nuc.read()) {
+    Serial.println("Failed to read light data from sensor!");
+    delay(500);
+    return;
+  }
+  unsigned short rgbc[4];
+  rgbc[0] = bh1745nuc.red;
+  red = (String(rgbc[0]));
+  rgbc[1] = bh1745nuc.green;
+  green = (String(rgbc[1]));
+  rgbc[2] = bh1745nuc.blue;
+  blue = (String(rgbc[2]));
+  rgbc[3] = bh1745nuc.clear;
+  clear = (String(rgbc[3]));
+  Serial.print(String("R: ")+(String(rgbc[0]))+",G"+(String(rgbc[1]))+",B"+(String(rgbc[2]))+",C"+(String(rgbc[3]))+"\n");
+  
+} 
 void loop() {
   //Assign the server to handle the clients
   server.handleClient();
-  readFuelGaugeMeasurement();
+  //delay(1000);
+  //readFuelGaugeMeasurement();
   
   //displayParameters();
   unsigned long currentMillis = millis();
   if(currentMillis - previousMillis >= climateDelay) {
     fetchClimateData();
+    readLightMeasurements();
+    getSoundSample();
     previousMillis = currentMillis;
   }
+  
+
   display.clearDisplay();
   display.println("Make a choice on light");
   display.display();
@@ -297,6 +466,46 @@ void handle_OnConnect(){
   Serial.println("Client Connected");
   server.send(200, "text/html","OK"); 
 }
+
+void handle_GetStoredReadings(){
+  addCORS();
+  File file = SD.open("readings.txt");
+  if(!file)
+  {
+    server.send(404,"text/plain","No Stored Readings Found");
+    Serial.println("No Readings found on SD");
+    return;
+  }
+  String response = "";
+  while(file.available()){
+    response+= file.readStringUntil('\n');
+    response +="\n";
+    if(response.length()>2000){
+      server.sendContent(response); // chunk limit
+      response="";
+    }
+  }
+  file.close();
+  if(response.length()>0)
+  {
+    server.send(200,"text/plain",response);
+  }
+  else{
+    server.send(200,"text/plain","");
+  }
+  Serial.println("Sent stored readings to base station");
+  Serial.println("Clearing stored Readings");
+}
+
+void handle_ClearStoredReadings() {
+  if (SD.exists("/readings.txt")) {
+    SD.remove("/readings.txt");
+    server.send(200, "text/plain", "Cleared stored readings.");
+    Serial.println("Cleared readings.txt.");
+  } else {
+    server.send(404, "text/plain", "No readings.txt to clear.");
+  }
+}
 void handle_redON(){
   Serial.println("RED ON");
   addCORS();
@@ -311,26 +520,73 @@ void handle_redOFF()
   redLED_status=false;
   server.send(200, "text/html","OK");
 }
+void handle_getSoundLevel(){
+  addCORS();
+  delay(200);
+  server.send(200, "text/plain", noiseLevel);
+}
 void handle_ClimateData(){
   addCORS();
-  delay(1000);
-  String climateData[3];
-  climateData[0]=temp;
-  climateData[1]=humid; 
-  climateData[2]=pressure;
-  String combinedData = climateData[0] + "," + climateData[1] + "," + climateData[2];
+  delay(200);
+  String climateData[5];
+  //readLightMeasurements();
+  //getSoundSample();
+  //Get current Unix timestamp
+  std::time_t now = std::time(nullptr);
+  String unix_time = String((long)now);   // convert to String
+
+  String combinedData = zone + "," + temp + "," + noiseLevel + "," + clear + "," + unix_time;
+  saveToSD(combinedData); // SAVES DATA TO SD
+  delay(200);
+
   server.send(200, "text/plain", combinedData);
 }
 void handle_getBattery(){
   addCORS();
-  delay(500);
+  delay(100);
   float battPercent = readFuelGaugeMeasurement();
   if(isnan(battPercent)){
     Serial.println("Failed to read battery percentage");
     server.send(500,"text/plain","Error");
     return;
   }
-  server.send(200,"text/plain",(String(battPercentage,1))); // read with a % other side
+  //Get current Unix timestamp
+  std::time_t now = std::time(nullptr);
+  String unix_time = String((long)now);   // convert to String
+  String combinedBatteryData = zone + "," + String(battPercentage) + "," + unix_time;
+  server.send(200,"text/plain",combinedBatteryData); // read with a % other side
+}
+bool isDataFresh(){
+  if((millis()-climateLastUpdate)<dataTimeOut)
+  {
+    return true;
+  }
+  return false;
+}
+void handle_sanityCheck(){
+  addCORS();
+  delay(200);
+  if(isDataFresh()){
+    server.send(200, "text/plain","Data OK");
+    return;
+  }
+  else{
+    server.send(500, "text/plain","Data Stale");
+    return;
+  }
+
+  
+}
+void handle_getRGBC(){
+  addCORS();
+  delay(200);
+  String rgbcData[4];
+  rgbcData[0]=red;
+  rgbcData[1]=green; 
+  rgbcData[2]=blue;
+  rgbcData[3]=clear;
+  String combinedData = rgbcData[0] + "," + rgbcData[1] + "," + rgbcData[2] + "," + rgbcData[3];
+  server.send(200, "text/plain", combinedData);
 }
 void handle_getTemp(){
   //sendCORSHeaders();
@@ -451,6 +707,8 @@ float readFuelGaugeMeasurement(){
   if (battPercent < 20 && autoLowPower && !lowPowerMode){ //low power mode on low charge
     handle_lowPowerModeOn();
   }
+   // save energy, dont query too often!
+  batteryLastUpdate = millis();
   return battPercent;
 }
 /*
