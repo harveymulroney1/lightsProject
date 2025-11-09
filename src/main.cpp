@@ -100,8 +100,8 @@ bool readConfigFromSD(DeviceConfig &cfg) {
 }
 
 //specifies the SSID and Password of the soft Access Point
-const char* ap_ssid = "SKY5RTWG";           //sets soft Access Point SSID
-const char* ap_password= "GNQjpL6Kmk5CWN";    //sets access Point Password
+const char* ap_ssid = "GowersSmall";           //sets soft Access Point SSID
+const char* ap_password= "mattyisalegend";    //sets access Point Password
 // MOBILE
 /* const char* ap_ssid = "Harvey's iPhone";
 const char* ap_password= "harvey123"; */
@@ -110,8 +110,8 @@ int current_stations=0, new_stations=0;  //variables to hold the number of conne
 
 //IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
 //IPAddress gateway(10, 45, 1, 1);
-IPAddress local_IP(192, 168, 0, 50);
-IPAddress gateway(192, 168, 0, 1);
+IPAddress local_IP(10, 45, 1, 13);
+IPAddress gateway(10, 45, 1, 1);
 IPAddress subnet(255, 255, 255, 0);  
 /* IPAddress local_IP(172,20,10,6);
 IPAddress gateway(172,20,10,1);
@@ -229,8 +229,8 @@ else
 {
   Serial.println("failed to load config"); //default values
   config.deviceNumber = 1;
-  config.ip = IPAddress(192, 168, 0, 50);
-  config.gateway = IPAddress(192, 168, 0, 1);
+  config.ip = IPAddress(10, 45, 1, 14);
+  config.gateway = IPAddress(10, 45, 1, 1);
   config.subnet = IPAddress(255, 255, 255, 0);
   config.zone = zone;
   config.ssid = ap_ssid;
