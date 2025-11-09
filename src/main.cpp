@@ -55,9 +55,53 @@ unsigned long rgbcLastUpdate = 0;
 unsigned long noiseLastUpdate = 0;
 //-------Web server parameters ----------
 
+struct DeviceConfig {
+  int deviceNumber;
+  IPAddress ip;
+  IPAddress gateway;
+  IPAddress subnet;
+  String zone;
+  String ssid;
+  String password;
+};
+DeviceConfig config;
+
+bool readConfigFromSD(DeviceConfig &cfg) {
+  File configFile = SD.open("/config.txt");
+  if (!configFile) {
+    Serial.println("config.txt missing or unavalible");
+    return false;
+  }
+
+  while (configFile.available()) {
+    String line = configFile.readStringUntil('\n');
+    line.trim();
+    if (line.length() == 0 || line.startsWith("#")) continue;
+
+    int sepIndex = line.indexOf('=');
+    if (sepIndex == -1) continue;
+
+    String key = line.substring(0, sepIndex);
+    String value = line.substring(sepIndex + 1);
+    key.trim();
+    value.trim();
+
+    if (key == "DEVICE_NUMBER") cfg.deviceNumber = value.toInt();
+    else if (key == "IP") cfg.ip.fromString(value);
+    else if (key == "GATEWAY") cfg.gateway.fromString(value);
+    else if (key == "SUBNET") cfg.subnet.fromString(value);
+    else if (key == "ZONE") cfg.zone = value;
+    else if (key == "SSID") cfg.ssid = value;
+    else if (key == "PASSWORD") cfg.password = value;
+  }
+
+  configFile.close();
+  return true;
+}
+
 //specifies the SSID and Password of the soft Access Point
-const char* ap_ssid = "GowersSmall";           //sets soft Access Point SSID
-const char* ap_password= "mattyisalegend";    //sets access Point Password
+const char* ap_ssid = "SKY5RTWG";           //sets soft Access Point SSID
+const char* ap_password= "GNQjpL6Kmk5CWN";    //sets access Point Password
 // MOBILE
 /* const char* ap_ssid = "Harvey's iPhone";
 const char* ap_password= "harvey123"; */
@@ -66,8 +110,8 @@ int current_stations=0, new_stations=0;  //variables to hold the number of conne
 
 //IPAddress local_IP(10, 45, 1, 14);      //set your desired static IP address (i.e. vary the last digit)
 //IPAddress gateway(10, 45, 1, 1);
-IPAddress local_IP(10, 45, 1, 14); 
-IPAddress gateway(10, 45, 1, 1);
+IPAddress local_IP(192, 168, 0, 50);
+IPAddress gateway(192, 168, 0, 1);
 IPAddress subnet(255, 255, 255, 0);  
 /* IPAddress local_IP(172,20,10,6);
 IPAddress gateway(172,20,10,1);
@@ -107,6 +151,8 @@ void handle_autoLowPowerModeOn();
 void handle_autoLowPowerModeOff();
 void handle_sanityCheck();
 void handle_getRGBC();
+void handle_GetStoredReadings();
+void handle_ClearStoredReadings();
 void addCORS();
 void handle_getSoundLevel();
 void getSoundSample();
@@ -123,6 +169,7 @@ String blue="";
 String clear="";
 String noiseLevel ="";
 String zone = "Zone 1";
+int device = 1;
 //---------------------------------------------
 /* struct tm getDateTime() {
   struct tm timeinfo;
@@ -165,13 +212,38 @@ void setup() {
   if (!SD.begin(SS)) {
     Serial.println("Card failed, or not present");
     // don't do anything more:
-    
   }
+
+if (readConfigFromSD(config)) { //read the config file
+  Serial.println("config.txt loaded: ");
+  Serial.print("IP: "); Serial.println(config.ip);
+  Serial.print("Gateway: "); Serial.println(config.gateway);
+  Serial.print("Subnet: "); Serial.println(config.subnet);
+  Serial.print("Zone: "); Serial.println(config.zone);
+  Serial.print("SSID: "); Serial.println(config.ssid);
+  Serial.print("Device Number: "); Serial.println(config.deviceNumber);
+  zone = config.zone;
+  device = config.deviceNumber;
+}
+else
+{
+  Serial.println("failed to load config"); //default values
+  config.deviceNumber = 1;
+  config.ip = IPAddress(192, 168, 0, 50);
+  config.gateway = IPAddress(192, 168, 0, 1);
+  config.subnet = IPAddress(255, 255, 255, 0);
+  config.zone = zone;
+  config.ssid = ap_ssid;
+  config.password = ap_password;
+}
+
   //WiFi.softAPConfig(local_IP, gateway, subnet);  //configures static IP for the soft AP
   WiFi.mode(WIFI_STA);
-  WiFi.config(local_IP,gateway, subnet);
-  WiFi.setHostname("PicoW");                  //sets the device hostname
-  WiFi.begin(ap_ssid,ap_password);
+  //WiFi.config(local_IP,gateway, subnet);
+  WiFi.config(config.ip, config.gateway, config.subnet);
+  WiFi.setHostname("PicoW"); // sets the device hostname
+  //WiFi.begin(ap_ssid,ap_password);
+  WiFi.begin(config.ssid.c_str(), config.password.c_str()); //configure the wifi using the config
   display.clearDisplay();
   display.setCursor(0,10);                 //Start at top-left corner (Col=0, Row =10)
   display.setTextSize(1);                 //Normal 1:1 pixel scale
